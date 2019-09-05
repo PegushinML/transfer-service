@@ -58,6 +58,14 @@ class RepositoryStubTest {
             assertThrows(IllegalArgumentException.class, () -> accountRepository.create(entity));
         }
 
+        @DisplayName("can get empty optional with null id")
+        @Test
+        void nullTest() {
+            var result = accountRepository.get(null);
+            assertNotNull(result);
+            assertTrue(result.isEmpty());
+        }
+
         @DisplayName("after creating one entity")
         @Nested
         class WhenOneCreated {

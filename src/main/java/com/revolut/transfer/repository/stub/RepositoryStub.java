@@ -19,6 +19,7 @@ public class RepositoryStub<T extends AbstractEntity> implements Repository<T> {
 
     @Override
     public Optional<T> get(Long id) {
+        if (id == null) return Optional.empty();
         return Optional.ofNullable(stateMap.get(id));
     }
 
