@@ -10,5 +10,6 @@ import java.math.BigDecimal;
 @Setter
 @NoArgsConstructor
 public class Account extends AbstractEntity {
+    private String name;
     private BigDecimal balance;
 }

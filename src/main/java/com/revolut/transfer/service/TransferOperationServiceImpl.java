@@ -82,8 +82,10 @@ public class TransferOperationServiceImpl implements TransferOperationService {
         var lock = lockMap.get(accountId);
         if (lock != null) return lock;
         lockObtainingLock.lock();
-        var result = lockMap.computeIfAbsent(accountId, (id) -> new ReentrantLock());
-        lockObtainingLock.unlock();
-        return result;
+        try {
+            return lockMap.computeIfAbsent(accountId, (id) -> new ReentrantLock());
+        } finally {
+            lockObtainingLock.unlock();
+        }
     }
 }
