@@ -4,21 +4,33 @@ import com.revolut.transfer.model.Account;
 import com.revolut.transfer.model.TransferTransaction;
 import com.revolut.transfer.repository.Repository;
 import com.revolut.transfer.service.exception.EntityNotExistsException;
-import lombok.RequiredArgsConstructor;
 
 import java.math.BigDecimal;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
+import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.locks.Lock;
+import java.util.concurrent.locks.ReentrantLock;
 
-@RequiredArgsConstructor
+
 public class TransferOperationServiceImpl implements TransferOperationService {
 
     private final Repository<Account> accountRepository;
     private final Repository<TransferTransaction> transactionRepository;
+    private final Map<Long, Lock> lockMap;
+    private final ReentrantLock lockObtainingLock;
+
+    public TransferOperationServiceImpl(Repository<Account> accountRepository,
+                                        Repository<TransferTransaction> transactionRepository) {
+        this.accountRepository = accountRepository;
+        this.transactionRepository = transactionRepository;
+        this.lockMap = new ConcurrentHashMap<>();
+        this.lockObtainingLock = new ReentrantLock();
+    }
 
     @Override
     public TransferTransaction transfer(long fromId, long toId, BigDecimal amount) {
-        //TODO: add concurrency support
         if (amount == null)
             throw new IllegalArgumentException("Amount cannot be null");
         if (amount.compareTo(BigDecimal.ZERO) <= 0)
@@ -31,18 +43,47 @@ public class TransferOperationServiceImpl implements TransferOperationService {
         var toAccount = accountRepository.get(toId)
                 .orElseThrow(() -> EntityNotExistsException.accountNotFoundById(toId));
 
-        if (fromAccount.getBalance().compareTo(amount) < 0)
-            throw new IllegalArgumentException("Unable to transfer, balance it too low");
+        var fromLock = retrieveLock(fromId);
+        var toLock = retrieveLock(toId);
 
-        fromAccount.setBalance(fromAccount.getBalance().subtract(amount));
-        toAccount.setBalance(toAccount.getBalance().add(amount));
+        try {
+            var unlocked = true;
+            while (unlocked) {
+                fromLock.lock();
+                if (toLock.tryLock()) {
+                    unlocked = false;
+                } else {
+                    fromLock.unlock();
+                }
+            }
 
-        var transaction = new TransferTransaction();
-        transaction.setFrom(fromId);
-        transaction.setTo(toId);
-        transaction.setAmount(amount);
-        transaction.setDateTime(OffsetDateTime.now(ZoneOffset.UTC));
+            if (fromAccount.getBalance().compareTo(amount) < 0) {
+                throw new IllegalArgumentException("Unable to transfer, balance is too low");
+            }
 
-        return transactionRepository.create(transaction);
+
+            fromAccount.setBalance(fromAccount.getBalance().subtract(amount));
+            toAccount.setBalance(toAccount.getBalance().add(amount));
+
+            var transaction = new TransferTransaction();
+            transaction.setFrom(fromId);
+            transaction.setTo(toId);
+            transaction.setAmount(amount);
+            transaction.setDateTime(OffsetDateTime.now(ZoneOffset.UTC));
+
+            return transactionRepository.create(transaction);
+        } finally {
+            fromLock.unlock();
+            toLock.unlock();
+        }
+    }
+
+    private Lock retrieveLock(long accountId) {
+        var lock = lockMap.get(accountId);
+        if (lock != null) return lock;
+        lockObtainingLock.lock();
+        var result = lockMap.computeIfAbsent(accountId, (id) -> new ReentrantLock());
+        lockObtainingLock.unlock();
+        return result;
     }
 }

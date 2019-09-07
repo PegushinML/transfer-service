@@ -5,6 +5,7 @@ import com.revolut.transfer.model.Account;
 import com.revolut.transfer.model.TransferTransaction;
 import com.revolut.transfer.repository.Repository;
 import com.revolut.transfer.service.exception.EntityNotExistsException;
+import lombok.SneakyThrows;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
@@ -14,8 +15,9 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import org.mockito.stubbing.Answer;
 
 import java.math.BigDecimal;
+import java.util.ArrayList;
 import java.util.Optional;
-import java.util.concurrent.ThreadLocalRandom;
+import java.util.concurrent.*;
 
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.any;
@@ -163,6 +165,72 @@ class TransferOperationServiceImplTest {
                     }
                 }
             }
+        }
+    }
+
+    @DisplayName("Transfer concurrent test")
+    @Nested
+    class TransferConcurrentTest {
+        private Account fromAccount;
+        private Account toAccount;
+        private BigDecimal initialSummaryBalance;
+
+        @BeforeEach
+        void prepareData() {
+            fromAccount = new Account();
+            fromAccount.setId(1L);
+            fromAccount.setBalance(BigDecimal.valueOf(1000000L));
+            given(accountRepository.get(fromAccount.getId())).willReturn(Optional.of(fromAccount));
+
+            toAccount = new Account();
+            toAccount.setId(2L);
+            toAccount.setBalance(BigDecimal.valueOf(1000000L));
+            given(accountRepository.get(toAccount.getId())).willReturn(Optional.of(toAccount));
+
+            initialSummaryBalance = fromAccount.getBalance().add(toAccount.getBalance());
+
+            given(transactionRepository.create(any(TransferTransaction.class)))
+                    .willAnswer((Answer<TransferTransaction>) invocation -> invocation.getArgument(0));
+        }
+
+        @DisplayName("when multiple valid transactions performed concurrently")
+        @SneakyThrows
+        @Test
+        void multipleTransactionTest() {
+            int threads = 10;
+            int tasksPerThread = 10000;
+
+            var executionService = Executors.newFixedThreadPool(threads);
+            var latch = new CountDownLatch(1);
+
+            var futures = new ArrayList<Future<TransferTransaction>>(threads * tasksPerThread);
+            for (int i = 0; i < threads * tasksPerThread; i++) {
+                var future = executionService.submit(() -> {
+                    latch.await();
+                    if (ThreadLocalRandom.current().nextBoolean()) {
+                        return transferOperationService.transfer(fromAccount.getId(), toAccount.getId(), BigDecimal.TEN);
+                    } else {
+                        return transferOperationService.transfer(toAccount.getId(), fromAccount.getId(), BigDecimal.TEN);
+                    }
+                });
+                futures.add(future);
+            }
+
+            latch.countDown();
+
+            var summaryAmount = futures.stream()
+                    .map(future -> {
+                        try {
+                            return future.get().getAmount();
+                        } catch (InterruptedException | ExecutionException e) {
+                            throw new RuntimeException();
+                        }
+                    })
+                    .reduce(BigDecimal::add)
+                    .orElse(BigDecimal.ZERO);
+
+            assertEquals(BigDecimal.valueOf(threads * tasksPerThread * 10), summaryAmount);
+            assertEquals(initialSummaryBalance, fromAccount.getBalance().add(toAccount.getBalance()));
         }
     }
 

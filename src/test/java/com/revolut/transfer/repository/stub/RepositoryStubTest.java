@@ -7,7 +7,12 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 
+import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
 import java.util.stream.Collectors;
 import java.util.stream.IntStream;
 
@@ -56,6 +61,45 @@ class RepositoryStubTest {
             var entity = new Account();
             entity.setId(1L);
             assertThrows(IllegalArgumentException.class, () -> accountRepository.create(entity));
+        }
+
+        @DisplayName("can create multiple entities concurrently")
+        @Test
+        void canCreateConcurrently() {
+            int threads = 10;
+            int tasksPerThread = 10000;
+
+            var executionService = Executors.newFixedThreadPool(threads);
+            var latch = new CountDownLatch(1);
+
+            var futures = new ArrayList<Future<Account>>(threads * tasksPerThread);
+            for (int i = 0; i < threads * tasksPerThread; i++) {
+                var future = executionService.submit(() -> {
+                    latch.await();
+                    var entity = new Account();
+                    return accountRepository.create(entity);
+                });
+                futures.add(future);
+            }
+            latch.countDown();
+
+            var accounts = futures.stream()
+                    .map(accountFuture -> {
+                        try {
+                            return accountFuture.get();
+                        } catch (InterruptedException | ExecutionException e) {
+                            throw new RuntimeException();
+                        }
+                    })
+                    .collect(Collectors.toSet());
+
+            assertEquals(accounts.size(), threads * tasksPerThread);
+
+            var uniqueIds = accounts.stream()
+                    .map(Account::getId)
+                    .collect(Collectors.toSet());
+
+            assertEquals(uniqueIds.size(), threads * tasksPerThread);
         }
 
         @DisplayName("can get empty optional with null id")
