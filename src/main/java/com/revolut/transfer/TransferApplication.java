@@ -19,6 +19,6 @@ public class TransferApplication extends Application {
 
     @Override
     public Set<Object> getSingletons() {
-        return applicationContext.getBeans();
+        return applicationContext.getEndpointBeans();
     }
 }

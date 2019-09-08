@@ -56,7 +56,7 @@ public class TransferApplicationContext {
                 .build();
     }
 
-    public Set<Object> getBeans() {
+    Set<Object> getEndpointBeans() {
         return Set.of(
                 transferController,
                 accountController,
